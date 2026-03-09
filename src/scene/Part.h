@@ -20,5 +20,5 @@ struct Part {
     float colorG = 1;
     float colorB = 1;
 
-    bool dirty = false; // Needs render update
+    bool dirty = false;
 };

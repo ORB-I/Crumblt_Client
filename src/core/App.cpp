@@ -82,6 +82,9 @@ void App::init() {
         p.isLocal  = false;
         p.colorR = 0.3f; p.colorG = 0.7f; p.colorB = 1.0f; // blue for remote
         m_players.push_back(p);
+        // FIX: vector may have reallocated — reset local player pointer
+        for (auto& pl : m_players)
+            if (pl.isLocal) { m_localPlayer = &pl; break; }
     });
 
     m_photon.onPlayerLeave([this](int actorNr) {

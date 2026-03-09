@@ -50,7 +50,6 @@ public:
     }
 
 private:
-    // ---- Required pure virtuals ----
     void debugReturn(int, const JString& msg) override {
         printf("[Photon] %s\n", msg.UTF8Representation().cstr());
     }
@@ -87,7 +86,9 @@ private:
         printf("[Photon] Disconnected\n");
     }
 
+    // FIX 1: Skip self — joinRoomEventAction fires for every player including yourself
     void joinRoomEventAction(int playerNr, const JVector<int>&, const Player& player) override {
+        if (playerNr == m_lbc.getLocalPlayer().getNumber()) return; // that's us, skip
         m_owner.m_playerCount++;
         if (m_owner.m_onJoin) {
             std::string uname = player.getName().UTF8Representation().cstr();
