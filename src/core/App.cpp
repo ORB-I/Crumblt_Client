@@ -104,6 +104,12 @@ void App::init() {
         }
     });
 
+    m_photon.onChat([this](const std::string& uname, const std::string& msg) {
+        m_chatMessages.push_back({uname, msg});
+        if (m_chatMessages.size() > 100) m_chatMessages.erase(m_chatMessages.begin());
+        m_scrollToBottom = true;
+    });
+
     // Connect to Photon
     m_photon.connect(m_cfg.gameId, m_username);
 
@@ -175,7 +181,7 @@ void App::update(float dt) {
     // Photon tick
     m_photon.update();
 
-    if (m_localPlayer) {
+    if (m_localPlayer && !m_chatFocused) {
         float spd = m_localPlayer->speed;
         if (m_keyW || m_keyUp)    m_localPlayer->z -= spd * dt;
         if (m_keyS || m_keyDown)  m_localPlayer->z += spd * dt;
@@ -225,6 +231,41 @@ void App::render() {
         ImGui::TextColored({0.3f,1.0f,0.3f,1.0f}, " ● %d online", m_photon.playerCount());
     } else {
         ImGui::TextColored({1.0f,0.5f,0.2f,1.0f}, " ○ connecting...");
+    }
+    ImGui::End();
+
+    // Chat window — bottom left, above status bar
+    ImGui::SetNextWindowPos({8.0f, (float)h - 180.0f}, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({320.0f, 140.0f}, ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##chat", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize);
+
+    // Message list
+    ImGui::BeginChild("##chatlog", {304.0f, 100.0f}, false, ImGuiWindowFlags_NoScrollbar);
+    for (auto& msg : m_chatMessages)
+        ImGui::TextWrapped("[%s] %s", msg.username.c_str(), msg.text.c_str());
+    if (m_scrollToBottom) {
+        ImGui::SetScrollHereY(1.0f);
+        m_scrollToBottom = false;
+    }
+    ImGui::EndChild();
+
+    // Input
+    ImGui::SetNextItemWidth(280.0f);
+    bool hitEnter = ImGui::InputText("##chatinput", m_chatInput, sizeof(m_chatInput),
+        ImGuiInputTextFlags_EnterReturnsTrue);
+    m_chatFocused = ImGui::IsItemActive();
+    ImGui::SameLine();
+    if ((hitEnter || ImGui::Button("->")) && m_chatInput[0] != '\0') {
+        std::string msg(m_chatInput);
+        // Show locally immediately
+        m_chatMessages.push_back({m_username, msg});
+        m_scrollToBottom = true;
+        m_photon.sendChat(msg);
+        m_chatInput[0] = '\0';
+        ImGui::SetKeyboardFocusHere(-1); // keep focus on input
     }
     ImGui::End();
 

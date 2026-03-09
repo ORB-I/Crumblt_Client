@@ -46,6 +46,13 @@ private:
     PhotonClient           m_photon;
     float                  m_sendTimer   = 0.0f;
 
+    // Chat
+    struct ChatMessage { std::string username; std::string text; };
+    std::vector<ChatMessage> m_chatMessages;
+    char                     m_chatInput[256] = {};
+    bool                     m_chatFocused    = false;
+    bool                     m_scrollToBottom = false;
+
     std::unique_ptr<Renderer> m_renderer;
 
     bool m_keyW = false, m_keyA = false, m_keyS = false, m_keyD = false;

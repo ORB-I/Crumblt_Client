@@ -5,8 +5,9 @@
 
 #define PHOTON_APP_ID "4b063a64-14bb-4a04-a97e-46b4ee29e9c9"
 
-static constexpr nByte EV_PLAYER_MOVE = 1;
 static constexpr nByte EV_NODE_UPDATE = 0;
+static constexpr nByte EV_PLAYER_MOVE = 1;
+static constexpr nByte EV_CHAT        = 2;
 
 using namespace ExitGames::LoadBalancing;
 using namespace ExitGames::Common;
@@ -49,6 +50,14 @@ public:
         m_lbc.opRaiseEvent(false, ev, EV_NODE_UPDATE);
     }
 
+    void sendChat(const std::string& message, const std::string& username) {
+        if (!m_lbc.getIsInGameRoom()) return;
+        Hashtable ev;
+        ev.put((nByte)0, JString(username.c_str()));
+        ev.put((nByte)1, JString(message.c_str()));
+        m_lbc.opRaiseEvent(true, ev, EV_CHAT);
+    }
+
 private:
     void debugReturn(int, const JString& msg) override {
         printf("[Photon] %s\n", msg.UTF8Representation().cstr());
@@ -86,9 +95,8 @@ private:
         printf("[Photon] Disconnected\n");
     }
 
-    // FIX 1: Skip self — joinRoomEventAction fires for every player including yourself
     void joinRoomEventAction(int playerNr, const JVector<int>&, const Player& player) override {
-        if (playerNr == m_lbc.getLocalPlayer().getNumber()) return; // that's us, skip
+        if (playerNr == m_lbc.getLocalPlayer().getNumber()) return;
         m_owner.m_playerCount++;
         if (m_owner.m_onJoin) {
             std::string uname = player.getName().UTF8Representation().cstr();
@@ -119,6 +127,11 @@ private:
             float z = ValueObject<float>(pos.getValue((nByte)2)).getDataCopy();
             m_owner.m_onUpdate(nodeId, x, y, z);
         }
+        else if (eventCode == EV_CHAT && m_owner.m_onChat) {
+            std::string uname = ValueObject<JString>(data.getValue((nByte)0)).getDataCopy().UTF8Representation().cstr();
+            std::string msg   = ValueObject<JString>(data.getValue((nByte)1)).getDataCopy().UTF8Representation().cstr();
+            m_owner.m_onChat(uname, msg);
+        }
     }
 
     void joinOrCreateRoomReturn(int localPlayerNr, const Hashtable&, const Hashtable&, int errorCode, const JString& errorString) override {
@@ -130,15 +143,13 @@ private:
         m_owner.m_playerCount = m_lbc.getCurrentlyJoinedRoom().getPlayerCount();
         printf("[Photon] Joined room as player %d, %d players total\n", localPlayerNr, m_owner.m_playerCount);
 
-        // Spawn players who were already in the room before we joined
+        // Spawn players already in the room
         const JVector<Player*>& players = m_lbc.getCurrentlyJoinedRoom().getPlayers();
         for (unsigned int i = 0; i < players.getSize(); i++) {
             const Player* p = players[i];
-            if (p->getNumber() == localPlayerNr) continue; // skip self
-            if (m_owner.m_onJoin) {
-                std::string uname = p->getName().UTF8Representation().cstr();
-                m_owner.m_onJoin(p->getNumber(), uname);
-            }
+            if (p->getNumber() == localPlayerNr) continue;
+            if (m_owner.m_onJoin)
+                m_owner.m_onJoin(p->getNumber(), p->getName().UTF8Representation().cstr());
         }
     }
 
@@ -162,6 +173,7 @@ PhotonClient::~PhotonClient() {
 }
 
 void PhotonClient::connect(const std::string& gameId, const std::string& username) {
+    m_username = username;
     if (!m_impl)
         m_impl = new PhotonClientImpl(*this, username);
     m_impl->connect(gameId);
@@ -181,4 +193,8 @@ void PhotonClient::sendPlayerMove(float x, float z) {
 
 void PhotonClient::sendNodeUpdate(const std::string& nodeId, float x, float y, float z) {
     if (m_impl && m_connected) m_impl->sendNodeUpdate(nodeId, x, y, z);
+}
+
+void PhotonClient::sendChat(const std::string& message) {
+    if (m_impl && m_connected) m_impl->sendChat(message, m_username);
 }
