@@ -6,6 +6,7 @@
 #include "Http.h"
 #include "../scene/Scene.h"
 #include "../scene/Player.h"
+#include "../network/PhotonClient.h"
 #include "../renderer/Renderer.h"
 
 struct AppConfig {
@@ -42,9 +43,11 @@ private:
     std::vector<Player>    m_players;
     Player*                m_localPlayer = nullptr;
 
+    PhotonClient           m_photon;
+    float                  m_sendTimer   = 0.0f;
+
     std::unique_ptr<Renderer> m_renderer;
 
-    // Input state
     bool m_keyW = false, m_keyA = false, m_keyS = false, m_keyD = false;
     bool m_keyUp = false, m_keyDown = false, m_keyLeft = false, m_keyRight = false;
 };
