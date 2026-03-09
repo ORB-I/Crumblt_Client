@@ -69,11 +69,40 @@ void App::init() {
     local.id       = "local";
     local.username = m_username;
     local.isLocal  = true;
-    local.x = 0.0f;
-    local.z = 0.0f;
-    local.colorR = 1.0f; local.colorG = 0.85f; local.colorB = 0.0f; // yellow
+    local.colorR = 1.0f; local.colorG = 0.85f; local.colorB = 0.0f;
     m_players.push_back(local);
     m_localPlayer = &m_players.back();
+
+    // Wire Photon callbacks
+    m_photon.onPlayerJoin([this](int actorNr, const std::string& uname) {
+        printf("[Photon] Player joined: %d (%s)\n", actorNr, uname.c_str());
+        Player p;
+        p.id       = std::to_string(actorNr);
+        p.username = uname;
+        p.isLocal  = false;
+        p.colorR = 0.3f; p.colorG = 0.7f; p.colorB = 1.0f; // blue for remote
+        m_players.push_back(p);
+    });
+
+    m_photon.onPlayerLeave([this](int actorNr) {
+        printf("[Photon] Player left: %d\n", actorNr);
+        std::string id = std::to_string(actorNr);
+        m_players.erase(std::remove_if(m_players.begin(), m_players.end(),
+            [&](const Player& p){ return p.id == id; }), m_players.end());
+        // Reset local player pointer in case vector reallocated
+        for (auto& p : m_players)
+            if (p.isLocal) { m_localPlayer = &p; break; }
+    });
+
+    m_photon.onPlayerMove([this](int actorNr, float x, float z) {
+        std::string id = std::to_string(actorNr);
+        for (auto& p : m_players) {
+            if (p.id == id) { p.x = x; p.z = z; break; }
+        }
+    });
+
+    // Connect to Photon
+    m_photon.connect(m_cfg.gameId, m_username);
 
     m_renderer = std::make_unique<Renderer>(m_sdlRenderer);
     m_running  = true;
@@ -82,6 +111,7 @@ void App::init() {
 }
 
 void App::shutdown() {
+    m_photon.disconnect();
     m_renderer.reset();
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
@@ -101,7 +131,7 @@ int App::run() {
         pollEvents();
         uint64_t now = SDL_GetTicks64();
         float dt = (now - m_lastTime) / 1000.0f;
-        if (dt > 0.1f) dt = 0.1f; // clamp
+        if (dt > 0.1f) dt = 0.1f;
         m_lastTime = now;
         update(dt);
         render();
@@ -120,10 +150,14 @@ void App::pollEvents() {
         bool up   = (e.type == SDL_KEYUP);
         if (down || up) {
             switch (e.key.keysym.sym) {
-                case SDLK_w:     case SDLK_UP:    m_keyW    = m_keyUp    = down; break;
-                case SDLK_s:     case SDLK_DOWN:  m_keyS    = m_keyDown  = down; break;
-                case SDLK_a:     case SDLK_LEFT:  m_keyA    = m_keyLeft  = down; break;
-                case SDLK_d:     case SDLK_RIGHT: m_keyD    = m_keyRight = down; break;
+                case SDLK_w:     m_keyW    = down; break;
+                case SDLK_s:     m_keyS    = down; break;
+                case SDLK_a:     m_keyA    = down; break;
+                case SDLK_d:     m_keyD    = down; break;
+                case SDLK_UP:    m_keyUp   = down; break;
+                case SDLK_DOWN:  m_keyDown = down; break;
+                case SDLK_LEFT:  m_keyLeft = down; break;
+                case SDLK_RIGHT: m_keyRight= down; break;
                 default: break;
             }
         }
@@ -135,16 +169,26 @@ void App::update(float dt) {
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
+    // Photon tick
+    m_photon.update();
+
     if (m_localPlayer) {
         float spd = m_localPlayer->speed;
-        if ((m_keyW || m_keyUp))    m_localPlayer->z -= spd * dt;
-        if ((m_keyS || m_keyDown))  m_localPlayer->z += spd * dt;
-        if ((m_keyA || m_keyLeft))  m_localPlayer->x -= spd * dt;
-        if ((m_keyD || m_keyRight)) m_localPlayer->x += spd * dt;
+        if (m_keyW || m_keyUp)    m_localPlayer->z -= spd * dt;
+        if (m_keyS || m_keyDown)  m_localPlayer->z += spd * dt;
+        if (m_keyA || m_keyLeft)  m_localPlayer->x -= spd * dt;
+        if (m_keyD || m_keyRight) m_localPlayer->x += spd * dt;
 
         // Camera follows player
         m_renderer->camX = m_localPlayer->x;
         m_renderer->camZ = m_localPlayer->z;
+
+        // Send position 20x/sec
+        m_sendTimer += dt;
+        if (m_sendTimer >= 0.05f) {
+            m_sendTimer = 0.0f;
+            m_photon.sendPlayerMove(m_localPlayer->x, m_localPlayer->z);
+        }
     }
 }
 
@@ -165,7 +209,7 @@ void App::render() {
     ImGui::TextUnformatted(m_gameName.c_str());
     ImGui::End();
 
-    // Username bottom left
+    // Username + connection status bottom left
     ImGui::SetNextWindowPos({8.0f, (float)h - 32.0f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.4f);
     ImGui::Begin("##username", nullptr,
@@ -173,6 +217,12 @@ void App::render() {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::TextUnformatted(("@" + m_username).c_str());
+    ImGui::SameLine();
+    if (m_photon.isConnected()) {
+        ImGui::TextColored({0.3f,1.0f,0.3f,1.0f}, " ● %d online", m_photon.playerCount());
+    } else {
+        ImGui::TextColored({1.0f,0.5f,0.2f,1.0f}, " ○ connecting...");
+    }
     ImGui::End();
 
     // Position debug bottom right

@@ -43,6 +43,18 @@ target_include_directories(imgui_backends PUBLIC
 )
 target_link_libraries(imgui_backends PUBLIC imgui::imgui SDL2::SDL2)
 
+# ---- Photon SDK ----
+set(PHOTON_SDK_PATH "${CMAKE_SOURCE_DIR}/libs/photon")
+
+# Pick vc17 release md x64 libs (highest available, vc18 compatible)
+set(PHOTON_LIB_SUFFIX "vc17_release_windows_md_x64")
+
+set(PHOTON_LIBS
+  ${PHOTON_SDK_PATH}/LoadBalancing-cpp/lib/LoadBalancing-cpp_${PHOTON_LIB_SUFFIX}.lib
+  ${PHOTON_SDK_PATH}/Photon-cpp/lib/Photon-cpp_${PHOTON_LIB_SUFFIX}.lib
+  ${PHOTON_SDK_PATH}/Common-cpp/lib/Common-cpp_${PHOTON_LIB_SUFFIX}.lib
+)
+
 # ---- Source files ----
 set(SOURCES
   src/main.cpp
@@ -58,7 +70,25 @@ set(SOURCES
 
 add_executable(CrumbltClient ${SOURCES})
 
-target_include_directories(CrumbltClient PRIVATE src)
+target_include_directories(CrumbltClient PRIVATE
+  src
+  ${PHOTON_SDK_PATH}
+  ${PHOTON_SDK_PATH}/Chat-cpp/inc
+  ${PHOTON_SDK_PATH}/Common-cpp/inc
+  ${PHOTON_SDK_PATH}/LoadBalancing-cpp/inc
+  ${PHOTON_SDK_PATH}/Photon-cpp/inc
+  ${PHOTON_SDK_PATH}/PhotonVoice-cpp/inc
+  ${PHOTON_SDK_PATH}/LoadBalancing-cpp/inc/Internal
+  ${PHOTON_SDK_PATH}/Common-cpp/inc/Internal
+  ${PHOTON_SDK_PATH}/Common-cpp/inc/Helpers
+  ${PHOTON_SDK_PATH}/Photon-cpp/inc/Enums
+  ${PHOTON_SDK_PATH}/Photon-cpp/inc/Internal
+  ${PHOTON_SDK_PATH}/PhotonVoice-cpp/inc/Internal
+  ${PHOTON_SDK_PATH}/LoadBalancing-cpp/inc/Enums
+  ${PHOTON_SDK_PATH}/Chat-cpp/inc/Internal
+  ${PHOTON_SDK_PATH}/Chat-cpp/inc/Enums
+  ${PHOTON_SDK_PATH}/PhotonVoice-cpp/inc/Enums
+)
 
 target_link_libraries(CrumbltClient PRIVATE
   imgui::imgui
@@ -69,11 +99,12 @@ target_link_libraries(CrumbltClient PRIVATE
   SDL2::SDL2main
   Luau.VM
   Luau.Compiler
+  ${PHOTON_LIBS}
 )
 
 if(WIN32)
   target_compile_definitions(CrumbltClient PRIVATE NOMINMAX)
-  target_link_libraries(CrumbltClient PRIVATE dwmapi)
+  target_link_libraries(CrumbltClient PRIVATE dwmapi ws2_32)
 endif()
 
 add_custom_command(TARGET CrumbltClient POST_BUILD

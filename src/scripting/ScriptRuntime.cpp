@@ -3,6 +3,7 @@
 #include "../network/PhotonClient.h"
 #include "../core/Http.h"
 
+// Add these includes
 #include <lua.h>
 #include <lualib.h>
 #include <luacode.h>
@@ -10,24 +11,53 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <memory>
 
 using json = nlohmann::json;
 
 // ---- Lua binding helpers ----
 
-// workspace.getPart(name) -> {x,y,z, sx,sy,sz, r,g,b} or nil
+// workspace.getPart(name) -> Part object or nil
 static int lua_workspace_getPart(lua_State* L) {
     auto* scene = (Scene*)lua_touserdata(L, lua_upvalueindex(1));
     const char* name = luaL_checkstring(L, 1);
     auto node = scene->findById(name);
-    if (!node) { lua_pushnil(L); return 1; }
+    if (!node) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Store shared_ptr on heap
+    auto** partPtr = (std::shared_ptr<SceneNode>**)lua_newuserdata(L, sizeof(std::shared_ptr<SceneNode>*));
+    *partPtr = new std::shared_ptr<SceneNode>(node);
+
+    // Set metatable
+    luaL_getmetatable(L, "Part");
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+static int lua_color3_new(lua_State* L) {
+    float r = (float)luaL_checknumber(L, 1);
+    float g = (float)luaL_checknumber(L, 2);
+    float b = (float)luaL_checknumber(L, 3);
+
     lua_newtable(L);
-    auto setf = [&](const char* k, float v) {
-        lua_pushstring(L, k); lua_pushnumber(L, v); lua_settable(L, -3);
-    };
-    setf("x", node->posX); setf("y", node->posY); setf("z", node->posZ);
-    setf("sx", node->sizeX); setf("sy", node->sizeY); setf("sz", node->sizeZ);
-    setf("r", node->colorR); setf("g", node->colorG); setf("b", node->colorB);
+    lua_pushnumber(L, r); lua_setfield(L, -2, "r");
+    lua_pushnumber(L, g); lua_setfield(L, -2, "g");
+    lua_pushnumber(L, b); lua_setfield(L, -2, "b");
+    return 1;
+}
+
+static int lua_color3_fromRGB(lua_State* L) {
+    int r = luaL_checkinteger(L, 1);
+    int g = luaL_checkinteger(L, 2);
+    int b = luaL_checkinteger(L, 3);
+
+    lua_newtable(L);
+    lua_pushnumber(L, r/255.0f); lua_setfield(L, -2, "r");
+    lua_pushnumber(L, g/255.0f); lua_setfield(L, -2, "g");
+    lua_pushnumber(L, b/255.0f); lua_setfield(L, -2, "b");
     return 1;
 }
 
@@ -39,6 +69,7 @@ static int lua_workspace_movePart(lua_State* L) {
     float x = (float)luaL_checknumber(L, 2);
     float y = (float)luaL_checknumber(L, 3);
     float z = (float)luaL_checknumber(L, 4);
+
     auto node = scene->findById(id);
     if (node) {
         node->posX = x; node->posY = y; node->posZ = z;
@@ -66,11 +97,90 @@ ScriptRuntime::ScriptRuntime(Scene* scene, PhotonClient* photon)
     : m_scene(scene), m_photon(photon) {
     m_L = luaL_newstate();
     luaL_openlibs((lua_State*)m_L);
+    createPartMetatable();
     bindGlobals();
 }
 
 ScriptRuntime::~ScriptRuntime() {
     stop();
+}
+
+void ScriptRuntime::createPartMetatable() {
+    lua_State* L = (lua_State*)m_L;
+
+    luaL_newmetatable(L, "Part");
+
+    // __gc to clean up shared_ptr
+    lua_pushcfunction(L, [](lua_State* L) -> int {
+        auto** partPtr = (std::shared_ptr<SceneNode>**)lua_touserdata(L, 1);
+        delete partPtr; // Free the shared_ptr
+        return 0;
+    }, "__gc");
+    lua_setfield(L, -2, "__gc");
+
+    // __index for property access
+    lua_pushcfunction(L, [](lua_State* L) -> int {
+        auto** partPtr = (std::shared_ptr<SceneNode>**)lua_touserdata(L, 1);
+        auto& node = **partPtr;
+        const char* key = lua_tostring(L, 2);
+
+        if (strcmp(key, "Color") == 0) {
+            lua_newtable(L);
+            lua_pushnumber(L, node->colorR); lua_setfield(L, -2, "r");
+            lua_pushnumber(L, node->colorG); lua_setfield(L, -2, "g");
+            lua_pushnumber(L, node->colorB); lua_setfield(L, -2, "b");
+            return 1;
+        }
+        else if (strcmp(key, "Position") == 0) {
+            lua_newtable(L);
+            lua_pushnumber(L, node->posX); lua_setfield(L, -2, "x");
+            lua_pushnumber(L, node->posY); lua_setfield(L, -2, "y");
+            lua_pushnumber(L, node->posZ); lua_setfield(L, -2, "z");
+            return 1;
+        }
+        else if (strcmp(key, "Size") == 0) {
+            lua_newtable(L);
+            lua_pushnumber(L, node->sizeX); lua_setfield(L, -2, "x");
+            lua_pushnumber(L, node->sizeY); lua_setfield(L, -2, "y");
+            lua_pushnumber(L, node->sizeZ); lua_setfield(L, -2, "z");
+            return 1;
+        }
+
+        lua_pushnil(L);
+        return 1;
+    }, "__index");
+    lua_setfield(L, -2, "__index");
+
+    // __newindex for property assignment
+    lua_pushcfunction(L, [](lua_State* L) -> int {
+        auto** partPtr = (std::shared_ptr<SceneNode>**)lua_touserdata(L, 1);
+        auto& node = **partPtr;
+        const char* key = lua_tostring(L, 2);
+
+        if (strcmp(key, "Color") == 0 && lua_istable(L, 3)) {
+            lua_getfield(L, 3, "r"); node->colorR = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "g"); node->colorG = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "b"); node->colorB = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            node->dirty = true;
+        }
+        else if (strcmp(key, "Position") == 0 && lua_istable(L, 3)) {
+            lua_getfield(L, 3, "x"); node->posX = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "y"); node->posY = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "z"); node->posZ = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            node->dirty = true;
+        }
+        else if (strcmp(key, "Size") == 0 && lua_istable(L, 3)) {
+            lua_getfield(L, 3, "x"); node->sizeX = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "y"); node->sizeY = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "z"); node->sizeZ = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            node->dirty = true;
+        }
+
+        return 0;
+    }, "__newindex");
+    lua_setfield(L, -2, "__newindex");
+
+    lua_pop(L, 1); // Pop metatable
 }
 
 void ScriptRuntime::bindGlobals() {
@@ -96,19 +206,18 @@ void ScriptRuntime::bindGlobals() {
 
     lua_setglobal(L, "workspace");
 
+    // Color3 table
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_color3_new, "new");
+    lua_setfield(L, -2, "new");
+    lua_pushcfunction(L, lua_color3_fromRGB, "fromRGB");
+    lua_setfield(L, -2, "fromRGB");
+    lua_setglobal(L, "Color3");
+
     printf("[ScriptRuntime] Globals bound\n");
 }
 
 void ScriptRuntime::loadFromScene(Scene& scene) {
-    // Fetch scripts from API
-    // We only need the gameId — pull it from the first root node's parent context
-    // For now, scripts are fetched separately via the API
-    // The caller (App) should have set session already via Auth
-
-    // Find game_id from HTTP — we need it passed in; for now use a workaround:
-    // Stored in scene root name (set by SceneLoader if needed), or passed via App
-    // TODO: pass gameId directly to ScriptRuntime
-    // For now we skip auto-load here and expose loadScripts(gameId) explicitly
     printf("[ScriptRuntime] loadFromScene called — use loadScripts(gameId) to fetch\n");
 }
 
@@ -139,7 +248,6 @@ void ScriptRuntime::update(float dt) {
     if (!m_started) return;
     lua_State* L = (lua_State*)m_L;
 
-    // Call global onUpdate(dt) if it exists
     lua_getglobal(L, "onUpdate");
     if (lua_isfunction(L, -1)) {
         lua_pushnumber(L, dt);
@@ -163,7 +271,6 @@ void ScriptRuntime::execScript(const LoadedScript& script) {
     lua_State* L = (lua_State*)m_L;
 
     size_t outSize = 0;
-    char* err = nullptr;
     char* bytecode = luau_compile(script.source.c_str(), script.source.size(), nullptr, &outSize);
 
     if (!bytecode) {
