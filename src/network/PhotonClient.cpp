@@ -129,6 +129,17 @@ private:
         m_owner.m_connected   = true;
         m_owner.m_playerCount = m_lbc.getCurrentlyJoinedRoom().getPlayerCount();
         printf("[Photon] Joined room as player %d, %d players total\n", localPlayerNr, m_owner.m_playerCount);
+
+        // Spawn players who were already in the room before we joined
+        const JVector<Player*>& players = m_lbc.getCurrentlyJoinedRoom().getPlayers();
+        for (unsigned int i = 0; i < players.getSize(); i++) {
+            const Player* p = players[i];
+            if (p->getNumber() == localPlayerNr) continue; // skip self
+            if (m_owner.m_onJoin) {
+                std::string uname = p->getName().UTF8Representation().cstr();
+                m_owner.m_onJoin(p->getNumber(), uname);
+            }
+        }
     }
 
     void leaveRoomReturn(int errorCode, const JString& errorString) override {
