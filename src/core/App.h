@@ -2,12 +2,12 @@
 #include <string>
 #include <memory>
 #include <vector>
-#include <SDL2/SDL.h>
+#include <raylib.h>
 #include "Http.h"
 #include "../scene/Scene.h"
 #include "../scene/Player.h"
 #include "../network/PhotonClient.h"
-#include "../renderer/Renderer.h"
+#include "../renderer/Renderer3D.h"
 
 struct AppConfig {
     std::string gameId;
@@ -30,21 +30,18 @@ private:
     void update(float dt);
     void render();
 
-    AppConfig              m_cfg;
-    SDL_Window*            m_window      = nullptr;
-    SDL_Renderer*          m_sdlRenderer = nullptr;
-    bool                   m_running     = false;
-    uint64_t               m_lastTime    = 0;
+    AppConfig           m_cfg;
+    bool                m_running     = false;
 
-    std::string            m_gameName;
-    std::string            m_username;
+    std::string         m_gameName;
+    std::string         m_username;
 
-    Scene                  m_scene;
-    std::vector<Player>    m_players;
-    Player*                m_localPlayer = nullptr;
+    Scene               m_scene;
+    std::vector<Player> m_players;
+    Player*             m_localPlayer = nullptr;
 
-    PhotonClient           m_photon;
-    float                  m_sendTimer   = 0.0f;
+    PhotonClient        m_photon;
+    float               m_sendTimer   = 0.0f;
 
     // Chat
     struct ChatMessage { std::string username; std::string text; };
@@ -53,7 +50,13 @@ private:
     bool                     m_chatFocused    = false;
     bool                     m_scrollToBottom = false;
 
-    std::unique_ptr<Renderer> m_renderer;
+    // Error popup
+    struct AppError { int code; std::string message; };
+    bool     m_showError = false;
+    AppError m_error;
+    void     showError(int code, const std::string& message);
+
+    std::unique_ptr<Renderer3D> m_renderer;
 
     bool m_keyW = false, m_keyA = false, m_keyS = false, m_keyD = false;
     bool m_keyUp = false, m_keyDown = false, m_keyLeft = false, m_keyRight = false;

@@ -2,40 +2,31 @@
 #include "Auth.h"
 #include "../scene/SceneLoader.h"
 
+#include <raylib.h>
 #include <imgui.h>
-#include <imgui_impl_sdl2.h>
-#include <imgui_impl_sdlrenderer2.h>
-#include <SDL2/SDL.h>
+#include <rlImGui.h>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <cstdio>
+#include <algorithm>
 
 App::App(AppConfig cfg) : m_cfg(std::move(cfg)) {}
 App::~App() { shutdown(); }
 
+void App::showError(int code, const std::string& message) {
+    m_error     = {code, message};
+    m_showError = true;
+}
+
 void App::init() {
     printf("[Client] init start\n");
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
-        throw std::runtime_error(SDL_GetError());
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
+    InitWindow(m_cfg.width, m_cfg.height, ("Crumblt - " + m_cfg.gameId).c_str());
+    SetTargetFPS(60);
 
-    m_window = SDL_CreateWindow(
-        ("Crumblt - " + m_cfg.gameId).c_str(),
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        m_cfg.width, m_cfg.height,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
-    );
-    if (!m_window) throw std::runtime_error(SDL_GetError());
-
-    m_sdlRenderer = SDL_CreateRenderer(m_window, -1,
-        SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
-    if (!m_sdlRenderer) throw std::runtime_error(SDL_GetError());
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    rlImGuiSetup(true); // true = dark theme
     ImGui::StyleColorsDark();
-    ImGui_ImplSDL2_InitForSDLRenderer(m_window, m_sdlRenderer);
-    ImGui_ImplSDLRenderer2_Init(m_sdlRenderer);
 
     if (!m_cfg.session.empty())
         Auth::saveSession(m_cfg.session);
@@ -44,17 +35,33 @@ void App::init() {
     try {
         auto res = Http::get("https://crumblt.com/api/auth/me.php");
         auto j = nlohmann::json::parse(res.body);
-        if (j.contains("user"))
+        if (j.contains("user")) {
             m_username = j["user"].value("username", "unknown");
-    } catch (...) { m_username = "unknown"; }
+        } else {
+            showError(405, "You are not authenticated. Please log in again.");
+        }
+    } catch (...) {
+        showError(500, "Failed to reach the authentication server.");
+        m_username = "unknown";
+    }
 
     // Fetch game name
     try {
         auto res = Http::get("https://crumblt.com/api/games/get.php?id=" + m_cfg.gameId);
         auto j = nlohmann::json::parse(res.body);
-        if (j.value("success", false))
+        if (j.value("success", false)) {
             m_gameName = j["game"].value("name", m_cfg.gameId);
-    } catch (...) { m_gameName = m_cfg.gameId; }
+        } else {
+            showError(404, "Game not found. It may have been deleted or made private.");
+            m_gameName = m_cfg.gameId;
+        }
+    } catch (...) {
+        showError(500, "Failed to fetch game information.");
+        m_gameName = m_cfg.gameId;
+    }
+
+    // Set window title to game name
+    SetWindowTitle(("Crumblt - " + m_gameName).c_str());
 
     // Load scene
     try {
@@ -62,6 +69,7 @@ void App::init() {
         printf("[Client] Scene loaded, %zu root nodes\n", m_scene.roots().size());
     } catch (std::exception& e) {
         printf("[Client] Scene load failed: %s\n", e.what());
+        showError(503, std::string("Failed to load the game scene: ") + e.what());
     }
 
     // Spawn local player
@@ -80,9 +88,8 @@ void App::init() {
         p.id       = std::to_string(actorNr);
         p.username = uname;
         p.isLocal  = false;
-        p.colorR = 0.3f; p.colorG = 0.7f; p.colorB = 1.0f; // blue for remote
+        p.colorR = 0.3f; p.colorG = 0.7f; p.colorB = 1.0f;
         m_players.push_back(p);
-        // FIX: vector may have reallocated — reset local player pointer
         for (auto& pl : m_players)
             if (pl.isLocal) { m_localPlayer = &pl; break; }
     });
@@ -92,16 +99,14 @@ void App::init() {
         std::string id = std::to_string(actorNr);
         m_players.erase(std::remove_if(m_players.begin(), m_players.end(),
             [&](const Player& p){ return p.id == id; }), m_players.end());
-        // Reset local player pointer in case vector reallocated
         for (auto& p : m_players)
             if (p.isLocal) { m_localPlayer = &p; break; }
     });
 
     m_photon.onPlayerMove([this](int actorNr, float x, float z) {
         std::string id = std::to_string(actorNr);
-        for (auto& p : m_players) {
+        for (auto& p : m_players)
             if (p.id == id) { p.x = x; p.z = z; break; }
-        }
     });
 
     m_photon.onChat([this](const std::string& uname, const std::string& msg) {
@@ -110,24 +115,34 @@ void App::init() {
         m_scrollToBottom = true;
     });
 
+    m_photon.onError([this](int code, const std::string& msg) {
+        showError(code, msg);
+    });
+
     // Connect to Photon
     m_photon.connect(m_cfg.gameId, m_username);
 
-    m_renderer = std::make_unique<Renderer>(m_sdlRenderer);
+    // Tell server we're in the game
+    try {
+        Http::post("https://crumblt.com/api/games/player_join.php",
+            "{\"game_id\":\"" + m_cfg.gameId + "\"}");
+    } catch (...) {}
+
+    m_renderer = std::make_unique<Renderer3D>();
     m_running  = true;
-    m_lastTime = SDL_GetTicks64();
     printf("[Client] Ready! Game: %s  User: %s\n", m_gameName.c_str(), m_username.c_str());
 }
 
 void App::shutdown() {
+    try {
+        Http::post("https://crumblt.com/api/games/player_leave.php",
+            "{\"game_id\":\"" + m_cfg.gameId + "\"}");
+    } catch (...) {}
+
     m_photon.disconnect();
     m_renderer.reset();
-    ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-    if (m_sdlRenderer) { SDL_DestroyRenderer(m_sdlRenderer); m_sdlRenderer = nullptr; }
-    if (m_window)      { SDL_DestroyWindow(m_window);        m_window      = nullptr; }
-    SDL_Quit();
+    rlImGuiShutdown();
+    CloseWindow();
 }
 
 int App::run() {
@@ -136,12 +151,10 @@ int App::run() {
         printf("[Client] Init failed: %s\n", e.what());
         return 1;
     }
-    while (m_running) {
-        pollEvents();
-        uint64_t now = SDL_GetTicks64();
-        float dt = (now - m_lastTime) / 1000.0f;
+    while (m_running && !WindowShouldClose()) {
+        float dt = GetFrameTime();
         if (dt > 0.1f) dt = 0.1f;
-        m_lastTime = now;
+        pollEvents();
         update(dt);
         render();
     }
@@ -149,39 +162,28 @@ int App::run() {
 }
 
 void App::pollEvents() {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        ImGui_ImplSDL2_ProcessEvent(&e);
-        if (e.type == SDL_QUIT) m_running = false;
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) m_running = false;
-
-        bool down = (e.type == SDL_KEYDOWN);
-        bool up   = (e.type == SDL_KEYUP);
-        if (down || up) {
-            switch (e.key.keysym.sym) {
-                case SDLK_w:     m_keyW    = down; break;
-                case SDLK_s:     m_keyS    = down; break;
-                case SDLK_a:     m_keyA    = down; break;
-                case SDLK_d:     m_keyD    = down; break;
-                case SDLK_UP:    m_keyUp   = down; break;
-                case SDLK_DOWN:  m_keyDown = down; break;
-                case SDLK_LEFT:  m_keyLeft = down; break;
-                case SDLK_RIGHT: m_keyRight= down; break;
-                default: break;
-            }
-        }
+    // Raylib handles OS events internally — we just read key state
+    if (!m_chatFocused) {
+        m_keyW     = IsKeyDown(KEY_W);
+        m_keyS     = IsKeyDown(KEY_S);
+        m_keyA     = IsKeyDown(KEY_A);
+        m_keyD     = IsKeyDown(KEY_D);
+        m_keyUp    = IsKeyDown(KEY_UP);
+        m_keyDown  = IsKeyDown(KEY_DOWN);
+        m_keyLeft  = IsKeyDown(KEY_LEFT);
+        m_keyRight = IsKeyDown(KEY_RIGHT);
+    } else {
+        m_keyW = m_keyS = m_keyA = m_keyD = false;
+        m_keyUp = m_keyDown = m_keyLeft = m_keyRight = false;
     }
+
+    if (IsKeyPressed(KEY_ESCAPE)) m_running = false;
 }
 
 void App::update(float dt) {
-    ImGui_ImplSDLRenderer2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
-
-    // Photon tick
     m_photon.update();
 
-    if (m_localPlayer && !m_chatFocused) {
+    if (m_localPlayer) {
         float spd = m_localPlayer->speed;
         if (m_keyW || m_keyUp)    m_localPlayer->z -= spd * dt;
         if (m_keyS || m_keyDown)  m_localPlayer->z += spd * dt;
@@ -202,10 +204,14 @@ void App::update(float dt) {
 }
 
 void App::render() {
-    int w, h;
-    SDL_GetWindowSize(m_window, &w, &h);
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
 
+    // 3D scene (calls BeginDrawing / EndDrawing internally)
     m_renderer->render(m_scene, m_players, w, h);
+
+    // ImGui overlays — drawn after EndDrawing via rlImGui
+    rlImGuiBegin();
 
     // Game name top center
     ImGui::SetNextWindowPos({(float)w * 0.5f, 24.0f}, ImGuiCond_Always, {0.5f, 0.5f});
@@ -228,31 +234,24 @@ void App::render() {
     ImGui::TextUnformatted(("@" + m_username).c_str());
     ImGui::SameLine();
     if (m_photon.isConnected()) {
-        ImGui::TextColored({0.3f,1.0f,0.3f,1.0f}, " ● %d online", m_photon.playerCount());
+        ImGui::TextColored({0.3f,1.0f,0.3f,1.0f}, " * %d online", m_photon.playerCount());
     } else {
-        ImGui::TextColored({1.0f,0.5f,0.2f,1.0f}, " ○ connecting...");
+        ImGui::TextColored({1.0f,0.5f,0.2f,1.0f}, " o connecting...");
     }
     ImGui::End();
 
-    // Chat window — bottom left, above status bar
+    // Chat window
     ImGui::SetNextWindowPos({8.0f, (float)h - 180.0f}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({320.0f, 140.0f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.55f);
     ImGui::Begin("##chat", nullptr,
         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize);
-
-    // Message list
     ImGui::BeginChild("##chatlog", {304.0f, 100.0f}, false, ImGuiWindowFlags_NoScrollbar);
     for (auto& msg : m_chatMessages)
         ImGui::TextWrapped("[%s] %s", msg.username.c_str(), msg.text.c_str());
-    if (m_scrollToBottom) {
-        ImGui::SetScrollHereY(1.0f);
-        m_scrollToBottom = false;
-    }
+    if (m_scrollToBottom) { ImGui::SetScrollHereY(1.0f); m_scrollToBottom = false; }
     ImGui::EndChild();
-
-    // Input
     ImGui::SetNextItemWidth(280.0f);
     bool hitEnter = ImGui::InputText("##chatinput", m_chatInput, sizeof(m_chatInput),
         ImGuiInputTextFlags_EnterReturnsTrue);
@@ -260,12 +259,11 @@ void App::render() {
     ImGui::SameLine();
     if ((hitEnter || ImGui::Button("->")) && m_chatInput[0] != '\0') {
         std::string msg(m_chatInput);
-        // Show locally immediately
         m_chatMessages.push_back({m_username, msg});
         m_scrollToBottom = true;
         m_photon.sendChat(msg);
         m_chatInput[0] = '\0';
-        ImGui::SetKeyboardFocusHere(-1); // keep focus on input
+        ImGui::SetKeyboardFocusHere(-1);
     }
     ImGui::End();
 
@@ -281,7 +279,36 @@ void App::render() {
         ImGui::End();
     }
 
-    ImGui::Render();
-    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), m_sdlRenderer);
-    SDL_RenderPresent(m_sdlRenderer);
+    // Error popup
+    if (m_showError) {
+        float pw = 400.0f, ph = 140.0f;
+        ImGui::SetNextWindowPos({(float)w/2 - pw/2, (float)h/2 - ph/2}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({pw, ph}, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.95f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg,      {0.18f, 0.18f, 0.18f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Border,        {0.35f, 0.35f, 0.35f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Button,        {0.28f, 0.28f, 0.28f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {0.38f, 0.38f, 0.38f, 1.0f});
+        ImGui::Begin("##error", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f);
+        ImGui::SetCursorPosX(16.0f);
+        ImGui::TextColored({0.7f,0.7f,0.7f,1.0f}, "Error code %d", m_error.code);
+        ImGui::SetCursorPosX(16.0f);
+        ImGui::Separator();
+        ImGui::SetCursorPosX(16.0f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6.0f);
+        ImGui::PushTextWrapPos(pw - 16.0f);
+        ImGui::TextUnformatted(m_error.message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SetCursorPos({pw - 106.0f, ph - 36.0f});
+        if (ImGui::Button("Close Game", {90.0f, 24.0f}))
+            m_running = false;
+        ImGui::End();
+        ImGui::PopStyleColor(4);
+    }
+
+    rlImGuiEnd();
 }

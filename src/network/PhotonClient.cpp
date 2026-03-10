@@ -64,6 +64,8 @@ private:
     }
     void connectionErrorReturn(int errorCode) override {
         printf("[Photon] Connection error: %d\n", errorCode);
+        if (m_owner.m_onError)
+            m_owner.m_onError(errorCode, "Connection to the multiplayer server failed.");
     }
     void clientErrorReturn(int errorCode) override {
         printf("[Photon] Client error: %d\n", errorCode);
@@ -137,6 +139,8 @@ private:
     void joinOrCreateRoomReturn(int localPlayerNr, const Hashtable&, const Hashtable&, int errorCode, const JString& errorString) override {
         if (errorCode) {
             printf("[Photon] joinOrCreateRoom error %d: %s\n", errorCode, errorString.UTF8Representation().cstr());
+            if (m_owner.m_onError)
+                m_owner.m_onError(errorCode, errorString.UTF8Representation().cstr());
             return;
         }
         m_owner.m_connected   = true;

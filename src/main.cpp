@@ -1,6 +1,5 @@
 #include "core/App.h"
 #include "core/Auth.h"
-#include <SDL2/SDL.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
