@@ -1,10 +1,8 @@
 #pragma once
-
 #include <network/PhotonClient.h>
 #include <renderer/Renderer3D.h>
 #include <scene/Player.h>
 #include <scene/Scene.h>
-
 #include <memory>
 #include <raylib.h>
 #include <string>
@@ -30,10 +28,11 @@ class App {
     void pollEvents();
     void update(float dt);
     void render();
+    void showError(int code, const std::string &message);
 
-    AppConfig m_cfg;
-    bool      m_running = false;
-
+    AppConfig   m_cfg;
+    bool        m_running  = false;
+    bool        m_devMode  = false;
     std::string m_gameName;
     std::string m_username;
 
@@ -44,7 +43,6 @@ class App {
     PhotonClient m_photon;
     float        m_sendTimer = 0.0f;
 
-    // Chat
     struct ChatMessage {
         std::string username;
         std::string text;
@@ -54,14 +52,12 @@ class App {
     bool                     m_chatFocused    = false;
     bool                     m_scrollToBottom = false;
 
-    // Error popup
     struct AppError {
         int         code;
         std::string message;
     };
     bool     m_showError = false;
     AppError m_error;
-    void     showError(int code, const std::string &message);
 
     std::unique_ptr<Renderer3D> m_renderer;
 
