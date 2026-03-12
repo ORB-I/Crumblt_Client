@@ -1,0 +1,57 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+# Brace style
+BreakBeforeBraces: Attach
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortBlocksOnASingleLine: Empty
+
+PointerAlignment: Right
+ReferenceAlignment: Right
+
+# Alignment
+AlignConsecutiveAssignments:
+    Enabled: true
+    AcrossEmptyLines: false
+    AcrossComments: false
+AlignConsecutiveDeclarations:
+    Enabled: true
+    AcrossEmptyLines: false
+    AcrossComments: false
+AlignTrailingComments: true
+
+# Constructor initializers
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+PackConstructorInitializers: Never
+
+# Includes
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+    - Regex: '^"'
+      Priority: 1
+    - Regex: "^<(core|network|renderer|scene|scripting)"
+      Priority: 2
+    - Regex: "^<(SDL2|imgui|nlohmann|lua|)"
+      Priority: 3
+    - Regex: "^<"
+      Priority: 4
+
+# Parameters
+BinPackParameters: false
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+
+# Misc
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+Cpp11BracedListStyle: true
+Standard: c++17

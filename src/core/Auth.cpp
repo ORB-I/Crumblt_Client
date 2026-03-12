@@ -1,12 +1,11 @@
 #include "Auth.h"
 #include "Http.h"
-#include <nlohmann/json.hpp>
-#include <fstream>
 #include <filesystem>
-
+#include <fstream>
+#include <nlohmann/json.hpp>
 #ifdef _WIN32
-  #include <windows.h>
-  #include <shlobj.h>
+#include <shlobj.h>
+#include <windows.h>
 #endif
 
 std::string Auth::s_sessionCookie;
@@ -18,18 +17,18 @@ std::string Auth::authFilePath() {
     std::filesystem::create_directories(std::string(path) + "\\Crumblt");
     return std::string(path) + "\\Crumblt\\session.json";
 #else
-    const char* home = getenv("HOME");
-    std::string dir = std::string(home) + "/.config/crumblt";
+    const char *home = getenv("HOME");
+    std::string dir  = std::string(home) + "/.config/crumblt";
     std::filesystem::create_directories(dir);
     return dir + "/session.json";
 #endif
 }
 
-void Auth::saveSession(const std::string& sessionId) {
+void Auth::saveSession(const std::string &sessionId) {
     s_sessionCookie = "PHPSESSID=" + sessionId;
     try {
-        nlohmann::json j = { {"session", sessionId} };
-        std::ofstream f(authFilePath());
+        nlohmann::json j = {{"session", sessionId}};
+        std::ofstream  f(authFilePath());
         f << j.dump(2);
     } catch (...) {}
 }
@@ -58,7 +57,6 @@ std::optional<UserInfo> Auth::tryAutoLogin() {
 
     s_sessionCookie = "PHPSESSID=" + sessionId;
 
-    // Verify session is still valid
     auto res = Http::get("https://crumblt.com/api/auth/me.php");
     if (!res.ok) {
         clearSession();
@@ -66,8 +64,7 @@ std::optional<UserInfo> Auth::tryAutoLogin() {
     }
 
     try {
-        auto data = nlohmann::json::parse(res.body);
-        auto& u   = data["user"];
+        auto    &u    = nlohmann::json::parse(res.body)["user"];
         UserInfo info;
         info.id          = u.value("id", "");
         info.username    = u.value("username", "");
