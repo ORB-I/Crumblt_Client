@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(CrumbltClient VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
 endif()
@@ -43,11 +44,21 @@ FetchContent_MakeAvailable(luau)
 
 # ---- Photon SDK ----
 set(PHOTON_SDK_PATH "${CMAKE_SOURCE_DIR}/libs/photon")
-set(PHOTON_LIB_SUFFIX "vc17_release_windows_md_x64")
+
+if (WIN32)
+set(PHOTON_LIB_SUFFIX "vc17_release_windows_md_x64.lib")
+set(PHOTON_LIB_PREFIX "")
+endif()
+
+if (APPLE)
+set(PHOTON_LIB_SUFFIX "release_macosx.a")
+set(PHOTON_LIB_PREFIX "lib")
+endif()
+
 set(PHOTON_LIBS
-  ${PHOTON_SDK_PATH}/LoadBalancing-cpp/lib/LoadBalancing-cpp_${PHOTON_LIB_SUFFIX}.lib
-  ${PHOTON_SDK_PATH}/Photon-cpp/lib/Photon-cpp_${PHOTON_LIB_SUFFIX}.lib
-  ${PHOTON_SDK_PATH}/Common-cpp/lib/Common-cpp_${PHOTON_LIB_SUFFIX}.lib
+  ${PHOTON_SDK_PATH}/LoadBalancing-cpp/lib/${PHOTON_LIB_PREFIX}LoadBalancing-cpp_${PHOTON_LIB_SUFFIX}
+  ${PHOTON_SDK_PATH}/Photon-cpp/lib/${PHOTON_LIB_PREFIX}Photon-cpp_${PHOTON_LIB_SUFFIX}
+  ${PHOTON_SDK_PATH}/Common-cpp/lib/${PHOTON_LIB_PREFIX}Common-cpp_${PHOTON_LIB_SUFFIX}
 )
 
 # ---- Source files ----
@@ -99,6 +110,24 @@ target_link_libraries(CrumbltClient PRIVATE
   Luau.Compiler
   ${PHOTON_LIBS}
 )
+
+if (APPLE)
+find_library(FOUNDATION Foundation)
+find_library(CORE_FOUNDATION CoreFoundation)
+find_library(SECURITY Security)
+find_library(CFNETWORK CFNetwork)
+
+target_link_libraries(CrumbltClient PRIVATE
+    ${FOUNDATION}
+    ${CORE_FOUNDATION}
+    ${SECURITY}
+    ${CFNETWORK}
+    ${PHOTON_SDK_PATH}/Common-objc/lib/${PHOTON_LIB_PREFIX}Common-objc_${PHOTON_LIB_SUFFIX}
+    ${PHOTON_SDK_PATH}/LoadBalancing-objc/lib/${PHOTON_LIB_PREFIX}LoadBalancing-objc_${PHOTON_LIB_SUFFIX}
+    ${PHOTON_SDK_PATH}/Photon-objc/lib/${PHOTON_LIB_PREFIX}Photon-objc_${PHOTON_LIB_SUFFIX}
+    ${PHOTON_SDK_PATH}/3rdparty/lib/apple/${PHOTON_LIB_PREFIX}crypto_${PHOTON_LIB_SUFFIX}
+)
+endif()
 
 if(WIN32)
   target_compile_definitions(CrumbltClient PRIVATE NOMINMAX)

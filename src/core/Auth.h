@@ -1,6 +1,6 @@
 #pragma once
-#include <string>
 #include <optional>
+#include <string>
 
 struct UserInfo {
     std::string id;
@@ -11,12 +11,12 @@ struct UserInfo {
 };
 
 class Auth {
-public:
+  public:
     // Load saved session, verify with server, return user if valid
     static std::optional<UserInfo> tryAutoLogin();
 
     // Save session cookie to disk
-    static void saveSession(const std::string& sessionId);
+    static void saveSession(const std::string &sessionId);
 
     // Clear saved session
     static void clearSession();
@@ -27,6 +27,6 @@ public:
     // Path to auth file
     static std::string authFilePath();
 
-private:
+  private:
     static std::string s_sessionCookie;
 };
