@@ -1,11 +1,8 @@
 #include "Auth.h"
-
 #include "Http.h"
-
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
-
 #ifdef _WIN32
 #include <shlobj.h>
 #include <windows.h>
@@ -60,7 +57,6 @@ std::optional<UserInfo> Auth::tryAutoLogin() {
 
     s_sessionCookie = "PHPSESSID=" + sessionId;
 
-    // Verify session is still valid
     auto res = Http::get("https://crumblt.com/api/auth/me.php");
     if (!res.ok) {
         clearSession();
@@ -68,8 +64,7 @@ std::optional<UserInfo> Auth::tryAutoLogin() {
     }
 
     try {
-        auto     data = nlohmann::json::parse(res.body);
-        auto    &u    = data["user"];
+        auto    &u    = nlohmann::json::parse(res.body)["user"];
         UserInfo info;
         info.id          = u.value("id", "");
         info.username    = u.value("username", "");
