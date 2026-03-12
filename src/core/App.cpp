@@ -1,5 +1,4 @@
 #include "App.h"
-
 #include "Auth.h"
 #include "Http.h"
 
@@ -14,6 +13,7 @@
 
 App::App(AppConfig cfg)
     : m_cfg(std::move(cfg)) {}
+
 App::~App() {
     shutdown();
 }
@@ -28,19 +28,34 @@ void App::init() {
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
     InitWindow(m_cfg.width, m_cfg.height, ("Crumblt - " + m_cfg.gameId).c_str());
+    SetExitKey(KEY_NULL); // ESC is used for the menu, not quitting
     SetTargetFPS(60);
 
-    rlImGuiSetup(true); // true = dark theme
+    rlImGuiSetup(true);
     ImGui::StyleColorsDark();
 
-    if (!m_cfg.session.empty()) Auth::saveSession(m_cfg.session);
+    // Dev mode - signalled by appending _devm to the session arg
+    if (!m_cfg.session.empty()) {
+        static const std::string DEV_SUFFIX = "_devm";
+        std::string session = m_cfg.session;
+        if (session.size() >= DEV_SUFFIX.size() &&
+            session.compare(session.size() - DEV_SUFFIX.size(),
+                            DEV_SUFFIX.size(), DEV_SUFFIX) == 0)
+        {
+            m_devMode = true;
+            session   = session.substr(0, session.size() - DEV_SUFFIX.size());
+            printf("[Client] Dev mode flag detected, clean session: %s\n", session.c_str());
+        }
+        Auth::saveSession(session);
+    }
 
     // Fetch username
     try {
         auto res = Http::get("https://crumblt.com/api/auth/me.php");
         auto j   = nlohmann::json::parse(res.body);
         if (j.contains("user")) {
-            m_username = j["user"].value("username", "unknown");
+            std::string raw = j["user"].value("username", "unknown");
+            m_username = m_devMode ? raw + " (dev mode)" : raw;
         } else {
             showError(405, "You are not authenticated. Please log in again.");
         }
@@ -64,7 +79,6 @@ void App::init() {
         m_gameName = m_cfg.gameId;
     }
 
-    // Set window title to game name
     SetWindowTitle(("Crumblt - " + m_gameName).c_str());
 
     // Load scene
@@ -91,7 +105,7 @@ void App::init() {
     m_photon.onPlayerJoin([this](int actorNr, const std::string &uname) {
         printf("[Photon] Player joined: %d (%s)\n", actorNr, uname.c_str());
         Player p;
-        p.id       = std::to_string(actorNr);
+        p.id      = std::to_string(actorNr);
         p.username = uname;
         p.isLocal  = false;
         p.colorR   = 0.3f;
@@ -99,34 +113,24 @@ void App::init() {
         p.colorB   = 1.0f;
         m_players.push_back(p);
         for (auto &pl : m_players)
-            if (pl.isLocal) {
-                m_localPlayer = &pl;
-                break;
-            }
+            if (pl.isLocal) { m_localPlayer = &pl; break; }
     });
 
     m_photon.onPlayerLeave([this](int actorNr) {
         printf("[Photon] Player left: %d\n", actorNr);
         std::string id = std::to_string(actorNr);
-        m_players.erase(std::remove_if(m_players.begin(),
-                                       m_players.end(),
-                                       [&](const Player &p) { return p.id == id; }),
-                        m_players.end());
+        m_players.erase(
+            std::remove_if(m_players.begin(), m_players.end(),
+                           [&](const Player &p) { return p.id == id; }),
+            m_players.end());
         for (auto &p : m_players)
-            if (p.isLocal) {
-                m_localPlayer = &p;
-                break;
-            }
+            if (p.isLocal) { m_localPlayer = &p; break; }
     });
 
     m_photon.onPlayerMove([this](int actorNr, float x, float z) {
         std::string id = std::to_string(actorNr);
         for (auto &p : m_players)
-            if (p.id == id) {
-                p.x = x;
-                p.z = z;
-                break;
-            }
+            if (p.id == id) { p.x = x; p.z = z; break; }
     });
 
     m_photon.onChat([this](const std::string &uname, const std::string &msg) {
@@ -137,10 +141,8 @@ void App::init() {
 
     m_photon.onError([this](int code, const std::string &msg) { showError(code, msg); });
 
-    // Connect to Photon
     m_photon.connect(m_cfg.gameId, m_username);
 
-    // Tell server we're in the game
     try {
         Http::post("https://crumblt.com/api/games/player_join.php",
                    "{\"game_id\":\"" + m_cfg.gameId + "\"}");
@@ -181,7 +183,6 @@ int App::run() {
 }
 
 void App::pollEvents() {
-    // Raylib handles OS events internally — we just read key state
     if (!m_chatFocused) {
         m_keyW     = IsKeyDown(KEY_W);
         m_keyS     = IsKeyDown(KEY_S);
@@ -195,8 +196,7 @@ void App::pollEvents() {
         m_keyW = m_keyS = m_keyA = m_keyD = false;
         m_keyUp = m_keyDown = m_keyLeft = m_keyRight = false;
     }
-
-    if (IsKeyPressed(KEY_ESCAPE)) m_running = false;
+    // ESC is handled by Renderer3D (toggles menu)
 }
 
 void App::update(float dt) {
@@ -204,16 +204,14 @@ void App::update(float dt) {
 
     if (m_localPlayer) {
         float spd = m_localPlayer->speed;
-        if (m_keyW || m_keyUp) m_localPlayer->z -= spd * dt;
-        if (m_keyS || m_keyDown) m_localPlayer->z += spd * dt;
-        if (m_keyA || m_keyLeft) m_localPlayer->x -= spd * dt;
+        if (m_keyW || m_keyUp)    m_localPlayer->z -= spd * dt;
+        if (m_keyS || m_keyDown)  m_localPlayer->z += spd * dt;
+        if (m_keyA || m_keyLeft)  m_localPlayer->x -= spd * dt;
         if (m_keyD || m_keyRight) m_localPlayer->x += spd * dt;
 
-        // Camera follows player
         m_renderer->camX = m_localPlayer->x;
         m_renderer->camZ = m_localPlayer->z;
 
-        // Send position 20x/sec
         m_sendTimer += dt;
         if (m_sendTimer >= 0.05f) {
             m_sendTimer = 0.0f;
@@ -226,20 +224,18 @@ void App::render() {
     int w = GetScreenWidth();
     int h = GetScreenHeight();
 
-    // 3D scene (calls BeginDrawing / EndDrawing internally)
-    m_renderer->render(m_scene, m_players, w, h);
+    m_renderer->beginFrame();
+    m_renderer->draw3D(m_scene, m_players);
 
-    // ImGui overlays — drawn after EndDrawing via rlImGui
     rlImGuiBegin();
 
     // Game name top center
     ImGui::SetNextWindowPos({(float)w * 0.5f, 24.0f}, ImGuiCond_Always, {0.5f, 0.5f});
     ImGui::SetNextWindowBgAlpha(0.4f);
-    ImGui::Begin("##gamename",
-                 nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::Begin("##gamename", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::SetWindowFontScale(1.5f);
     ImGui::TextUnformatted(m_gameName.c_str());
     ImGui::End();
@@ -247,11 +243,10 @@ void App::render() {
     // Username + connection status bottom left
     ImGui::SetNextWindowPos({8.0f, (float)h - 32.0f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.4f);
-    ImGui::Begin("##username",
-                 nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::Begin("##username", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::TextUnformatted(("@" + m_username).c_str());
     ImGui::SameLine();
     if (m_photon.isConnected()) {
@@ -265,21 +260,17 @@ void App::render() {
     ImGui::SetNextWindowPos({8.0f, (float)h - 180.0f}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({320.0f, 140.0f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.55f);
-    ImGui::Begin("##chat",
-                 nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize);
+    ImGui::Begin("##chat", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize);
     ImGui::BeginChild("##chatlog", {304.0f, 100.0f}, false, ImGuiWindowFlags_NoScrollbar);
     for (auto &msg : m_chatMessages)
         ImGui::TextWrapped("[%s] %s", msg.username.c_str(), msg.text.c_str());
-    if (m_scrollToBottom) {
-        ImGui::SetScrollHereY(1.0f);
-        m_scrollToBottom = false;
-    }
+    if (m_scrollToBottom) { ImGui::SetScrollHereY(1.0f); m_scrollToBottom = false; }
     ImGui::EndChild();
     ImGui::SetNextItemWidth(280.0f);
-    bool hitEnter = ImGui::InputText(
-        "##chatinput", m_chatInput, sizeof(m_chatInput), ImGuiInputTextFlags_EnterReturnsTrue);
+    bool hitEnter = ImGui::InputText("##chatinput", m_chatInput, sizeof(m_chatInput),
+                                     ImGuiInputTextFlags_EnterReturnsTrue);
     m_chatFocused = ImGui::IsItemActive();
     ImGui::SameLine();
     if ((hitEnter || ImGui::Button("->")) && m_chatInput[0] != '\0') {
@@ -294,14 +285,12 @@ void App::render() {
 
     // Position debug bottom right
     if (m_localPlayer) {
-        ImGui::SetNextWindowPos(
-            {(float)w - 8.0f, (float)h - 32.0f}, ImGuiCond_Always, {1.0f, 1.0f});
+        ImGui::SetNextWindowPos({(float)w - 8.0f, (float)h - 32.0f}, ImGuiCond_Always, {1.0f, 1.0f});
         ImGui::SetNextWindowBgAlpha(0.4f);
-        ImGui::Begin("##pos",
-                     nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                         ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Begin("##pos", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("%.1f, %.1f", m_localPlayer->x, m_localPlayer->z);
         ImGui::End();
     }
@@ -312,15 +301,14 @@ void App::render() {
         ImGui::SetNextWindowPos({(float)w / 2 - pw / 2, (float)h / 2 - ph / 2}, ImGuiCond_Always);
         ImGui::SetNextWindowSize({pw, ph}, ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.95f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, {0.18f, 0.18f, 0.18f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_Border, {0.35f, 0.35f, 0.35f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_Button, {0.28f, 0.28f, 0.28f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg,      {0.18f, 0.18f, 0.18f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Border,        {0.35f, 0.35f, 0.35f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Button,        {0.28f, 0.28f, 0.28f, 1.0f});
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {0.38f, 0.38f, 0.38f, 1.0f});
-        ImGui::Begin("##error",
-                     nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::Begin("##error", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoBringToFrontOnFocus);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f);
         ImGui::SetCursorPosX(16.0f);
         ImGui::TextColored({0.7f, 0.7f, 0.7f, 1.0f}, "Error code %d", m_error.code);
@@ -338,4 +326,11 @@ void App::render() {
     }
 
     rlImGuiEnd();
+
+    // Menu button + overlay — pure raylib, drawn on top of everything
+    m_renderer->drawMenuButton();
+    if (m_renderer->isMenuOpen())
+        m_renderer->drawMenu(w, h);
+
+    m_renderer->endFrame(m_players);
 }
