@@ -12,19 +12,10 @@ struct UserInfo {
 
 class Auth {
   public:
-    // Load saved session, verify with server, return user if valid
     static std::optional<UserInfo> tryAutoLogin();
-
-    // Save session cookie to disk
-    static void saveSession(const std::string &sessionId);
-
-    // Clear saved session
-    static void clearSession();
-
-    // Get saved session cookie string for use in HTTP requests
+    static void        saveSession(const std::string &sessionId);
+    static void        clearSession();
     static std::string getSessionCookie();
-
-    // Path to auth file
     static std::string authFilePath();
 
   private:
